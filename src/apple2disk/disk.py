@@ -1,7 +1,5 @@
 import bitstring
 import hashlib
-import os
-import sys
 import zlib
 
 SECTOR_SIZE = 256
@@ -24,9 +22,24 @@ class Disk(object):
         self.hash = hashlib.sha1(data).hexdigest()
 
         self.sectors = {}
+        for (track, sector) in self.EnumerateSectors():
+            self._ReadSector(track, sector)
+
+        # Assign ownership of T0, S0 to RWTS
+        self.rwts = RWTS.fromSector(self.ReadSector(0, 0))
+
+    @classmethod
+    def Taste(cls, disk):
+        # TODO: return a defined exception here
+        return cls(disk.name, disk.data)
+
+    def SetSectorOwner(self, track, sector, owner):
+        self.sectors[(track, sector)] = owner
+
+    def EnumerateSectors(self):
         for track in xrange(TRACKS_PER_DISK):
             for sector in xrange(SECTORS_PER_TRACK):
-                self.sectors[(track, sector)] = self._ReadSector(track, sector)
+                yield (track, sector)
 
     def _ReadSector(self, track, sector):
         offset = track * TRACK_SIZE + sector * SECTOR_SIZE
@@ -42,11 +55,11 @@ class Disk(object):
         except KeyError:
             raise IOError("Track $%02x sector $%02x out of bounds" % (track, sector))
 
-    def RWTS(self):
-        return self.sectors[(0,0)]
-
 
 class Sector(object):
+    # TODO: other types will include: VTOC, Catalog, File metadata, File content, Deleted file, Free space
+    TYPE = 'Unknown sector'
+
     def __init__(self, disk, track, sector, data):
         # Reference back to parent disk
         self.disk = disk
@@ -61,6 +74,16 @@ class Sector(object):
         compressed_data = zlib.compress(data.tobytes())
         self.compress_ratio = len(compressed_data) * 100 / len(data.tobytes())
 
+        disk.SetSectorOwner(track, sector, self)
+
+    # TODO: if all callers are using disk.ReadSector(track, sector) to get the sector then do that here
+    @classmethod
+    def fromSector(cls, sector, *args, **kwargs):
+        """Create and register a new Sector from an existing Sector object."""
+        # TODO: don't recompute hash and entropy
+        return cls(sector.disk, sector.track, sector.sector, sector.data, *args, **kwargs)
+
+    # TOOD: move RWTS ones into RWTS() class?
     KNOWN_HASHES = {
         'b376885ac8452b6cbf9ced81b1080bfd570d9b91': 'Zero sector',
         '90e6b1a0689974743cb92ca0b833ff1e683f4a73': 'RWTS (DOS 3.3 August 1980)',
@@ -81,38 +104,11 @@ class Sector(object):
         return human_name
 
     def __str__(self):
-        return "Track $%02x Sector $%02x: %s" % (self.track, self.sector, self.HumanName())
+        return "Track $%02x Sector $%02x: %s (%s)" % (self.track, self.sector, self.TYPE, self.HumanName())
 
-def main():
-    disks = {}
-    for root, dirs, files in os.walk(sys.argv[1]):
-        for f in files:
-            if not f.lower().endswith('.dsk') and not f.lower().endswith('.do'):
-                continue
 
-            print f
-            b = bytearray(open(os.path.join(root, f), 'r').read())
-            try:
-                disk = Disk(f, b)
-                disks[f] = disk
-            except IOError:
-                continue
-            except AssertionError:
-                continue
+class RWTS(Sector):
+    TYPE = "RWTS"
 
-            for ts, data in sorted(disk.sectors.iteritems()):
-                print data
-
-    # Group disks by hash of RWTS sector
-    rwts_hashes = {}
-    for f, d in disks.iteritems():
-        rwts_hash = d.RWTS().hash
-        rwts_hashes.setdefault(rwts_hash, []).append(f)
-
-    for h, disks in rwts_hashes.iteritems():
-        print h
-        for d in sorted(disks):
-            print "  %s" % d
-
-if __name__ == "__main__":
-    main()
+    def __init__(self, disk, track, sector, data):
+        super(RWTS, self).__init__(disk, track, sector, data)
