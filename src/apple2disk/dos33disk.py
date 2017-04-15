@@ -110,8 +110,10 @@ class FileMetadataSector(disklib.Sector):
             (t, s) = ds.unpack(
                 'uint:8, uint:8'
             )
-            if t and s:
+            if t:
+                # This may not be the end of the file, it can be sparse.
                 data_track_sectors.append((t, s))
+            # TODO: should I append a hole here if this is not the last entry?
             offset += 16
 
         self.next_track = next_track
