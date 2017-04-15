@@ -43,6 +43,27 @@ class VTOCSector(disklib.Sector):
         # TODO: why does DOS 3.3 sometimes display e.g. volume 254 when the VTOC says 178
         self.volume = volume
 
+        # Process freemap
+        offset = 0
+        track = 0
+        while offset < len(freemap):
+            track_freemap = freemap[offset:offset+32]
+            # Each track freemap is a 32-bit sequence where the sector order is
+            # FEDCBA9876543210................
+            for sector in xrange(disklib.SECTORS_PER_TRACK):
+                free = track_freemap[15-sector]
+
+                if free:
+                    old_sector = self.disk.ReadSector(track, sector)
+                    # check first this is an unclaimed sector
+                    assert type(old_sector) == disklib.Sector
+                    FreeSector.fromSector(old_sector)
+                # TODO: also handle sectors that are claimed to be used but don't end up getting referenced by anything
+
+            if track == tracks_per_disk:
+                break
+            track += 1
+            offset += 32
 
 class CatalogSector(disklib.Sector):
     TYPE = 'DOS 3.3 Catalog'
@@ -165,6 +186,9 @@ class Dos33Disk(disklib.Disk):
         track_sector_count = 0
         while next_track and next_sector:
             track_sector_count += 1
+            if next_track == 0x00:
+                # This entry has never been used, skip it
+                break
             if next_track == 0xff:
                 # Deleted file
                 # TODO: add sector type for this.  What to do about sectors claimed by this file that are in use by another file?  May discover this before or after this entry
