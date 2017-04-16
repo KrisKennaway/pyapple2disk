@@ -1,9 +1,7 @@
 import applesoft
 import bitstring
 import disk as disklib
-import string
-
-PRINTABLE = set(string.letters + string.digits + string.punctuation + ' ')
+import utils
 
 class FileType(object):
     def __init__(self, short_type, long_type, parser=None):
@@ -227,7 +225,11 @@ class Dos33Disk(disklib.Disk):
                 #print "XXX found a sparse sector?"
                 continue
             (t, s) = ts
-            fds = FileDataSector.fromSector(self.ReadSector(t, s), entry.FileName())
+            try:
+                fds = FileDataSector.fromSector(self.ReadSector(t, s), entry.FileName())
+            except disklib.IOError, e:
+                print "%s: Failed to read File data sector: %s" % (entry, e)
+                continue
             contents.append(fds.data)
 
         return File(entry, contents)
@@ -276,8 +278,11 @@ class File(object):
         self.catalog_entry = catalog_entry
 
         self.contents = contents
+        self.parsed_contents = None
         parser = catalog_entry.file_type.parser
         if parser:
-            self.parsed_contents = parser(contents)
-        else:
-            self.parsed_contents = None
+            try:
+                self.parsed_contents = parser(contents)
+            except Exception:
+                print "Failed to parse file %s" % self.catalog_entry
+                print utils.HexDump(contents.tobytes())
