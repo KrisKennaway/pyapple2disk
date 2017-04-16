@@ -1,20 +1,22 @@
+import applesoft
 import bitstring
 import disk as disklib
 import string
 
 PRINTABLE = set(string.letters + string.digits + string.punctuation + ' ')
 
-class File(object):
-    def __init__(self, short_type, long_type):
+class FileType(object):
+    def __init__(self, short_type, long_type, parser=None):
         self.short_type = short_type
         self.long_type = long_type
+        self.parser = parser
 
 FILE_TYPES = {
-    0x00: File('T', 'TEXT'),
-    0x01: File('I', 'INTEGER BASIC'),
+    0x00: FileType('T', 'TEXT'),
+    0x01: FileType('I', 'INTEGER BASIC'),
     # TODO: add handler for parsing file content
-    0x02: File('A', 'APPLESOFT BASIC'),
-    0x04: File('B', 'BINARY'),
+    0x02: FileType('A', 'APPLESOFT BASIC', applesoft.AppleSoft),
+    0x04: FileType('B', 'BINARY'),
     # TODO: others
 }
 
@@ -152,9 +154,19 @@ class Dos33Disk(disklib.Disk):
         # TODO: why does DOS 3.3 sometimes display e.g. volume 254 when the VTOC says 178
         self.volume = self.vtoc.volume
 
+        # List of stripped filenames in catalog order
+        self.filenames = []
+
+        # Maps stripped filenames to CatalogEntry objects
+        self.catalog = {}
+
         self.ReadCatalog()
+
+        # Maps stripped filename to File() object
+        self.files = {}
         for catalog_entry in self.catalog.itervalues():
-            self.ReadCatalogEntry(catalog_entry)
+            # TODO: last character has special meaning for deleted files and may legitimately be whitespace.  Could collide with a non-deleted file of the same stripped name
+            self.files[catalog_entry.FileName().rstrip()] = self.ReadCatalogEntry(catalog_entry)
 
     def _ReadVTOC(self):
         return VTOCSector.fromSector(self.ReadSector(0x11, 0x0))
@@ -218,14 +230,14 @@ class Dos33Disk(disklib.Disk):
             fds = FileDataSector.fromSector(self.ReadSector(t, s), entry.FileName())
             contents.append(fds.data)
 
-        return contents
+        return File(entry, contents)
 
     def __str__(self):
         catalog = ['DISK VOLUME %d\n' % self.volume]
         for filename in self.catalog:
             entry = self.files[filename]
             try:
-                file_type = FILE_TYPES[entry.file_type][0]
+                file_type = FILE_TYPES[entry.file_type].short_type
             except KeyError:
                 print "%s has unknown file type %02x" % (entry.FileName(), entry.file_type)
                 file_type = '?'
@@ -243,8 +255,8 @@ class CatalogEntry(object):
     def __init__(self, track, sector, file_type, file_name, length):
         self.track = track
         self.sector = sector
-        self.file_type = file_type & 0x7f
-        self.locked = file_type & 0x80
+        self.file_type = FILE_TYPES[file_type & 0x7f]
+        self.locked = bool(file_type & 0x80)
         self.file_name = file_name
         self.length = length
         # TODO: handle deleted files (track = 0xff, original track in file_name[0x20])
@@ -253,4 +265,19 @@ class CatalogEntry(object):
         return '%s' % ''.join([chr(ord(b) & 0x7f) for b in self.file_name])
 
     def __str__(self):
-        return "Track $%02x Sector $%02x Type %s Name: %s Length: %d" % (self.track, self.sector, FILE_TYPES[self.file_type], self.FileName(), self.length)
+        type_string = self.file_type.long_type
+        if self.locked:
+            type_string += ' (LOCKED)'
+        return "Track $%02x Sector $%02x Type %s Name: %s Length: %d" % (self.track, self.sector, type_string, self.FileName(), self.length)
+
+
+class File(object):
+    def __init__(self, catalog_entry, contents):
+        self.catalog_entry = catalog_entry
+
+        self.contents = contents
+        parser = catalog_entry.file_type.parser
+        if parser:
+            self.parsed_contents = parser(contents)
+        else:
+            self.parsed_contents = None
