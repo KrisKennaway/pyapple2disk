@@ -40,8 +40,28 @@ class VTOCSector(disklib.Sector):
         assert bytes_per_sector == disklib.SECTOR_SIZE
         assert sectors_per_track == disklib.SECTORS_PER_TRACK
 
+        # Max number of track/sector pairs which will fit in one file track/sector
+    	# list sector (122 for 256 byte sectors)
+        assert max_track_sector_pairs == 122
+
+        if tracks_per_disk != disklib.TRACKS_PER_DISK:
+            self.anomalies.append(
+                anomaly.Anomaly(
+                    self, anomaly.INTERESTING, 'Disk has %d tracks > %d' % (
+                        tracks_per_disk, disklib.TRACKS_PER_DISK)
+                )
+            )
+
         self.catalog_track = catalog_track
         self.catalog_sector = catalog_sector
+
+        if (catalog_track, catalog_sector) != (0x11, 0x0f):
+            self.anomalies.append(
+                anomaly.Anomaly(
+                    self, anomaly.INTERESTING, 'Catalog begins in unusual place: T$%02X S$%02X' % (
+                        catalog_track, catalog_sector)
+                )
+            )
 
         # TODO: why does DOS 3.3 sometimes display e.g. volume 254 when the VTOC says 178
         self.volume = volume
@@ -53,12 +73,33 @@ class VTOCSector(disklib.Sector):
             track_freemap = freemap[offset:offset+32]
             # Each track freemap is a 32-bit sequence where the sector order is
             # FEDCBA9876543210................
+
             for sector in xrange(disklib.SECTORS_PER_TRACK):
                 free = track_freemap[15-sector]
 
                 if free:
+                    if track == 0:
+                        self.anomalies.append(
+                            anomaly.Anomaly(
+                                self, anomaly.CORRUPTION,
+                                'Freemap claims free sector in track 0: T$%02X S$%02X (cannot be allocated in DOS ' +
+                                '3.3)' % (track, sector)
+                            )
+                        )
+                        continue
+                    if track >= tracks_per_disk:
+                        self.anomalies.append(
+                            anomaly.Anomaly(
+                                self, anomaly.CORRUPTION,
+                                'Freemap claims free sector beyond last track: T$%02X S$%02X' % (track, sector)
+                            )
+                        )
+                        continue
+
                     old_sector = self.disk.ReadSector(track, sector)
                     # check first this is an unclaimed sector
+                    # TODO: we haven't yet parsed the catalog so this won't yet have claimed the sectors.  We
+                    # need to validate the freemap once everything else is done.
                     if type(old_sector) != disklib.Sector:
                         self.anomalies.append(
                             anomaly.Anomaly(
@@ -69,8 +110,6 @@ class VTOCSector(disklib.Sector):
                     FreeSector.fromSector(old_sector)
                 # TODO: also handle sectors that are claimed to be used but don't end up getting referenced by anything
 
-            if track == tracks_per_disk:
-                break
             track += 1
             offset += 32
 
