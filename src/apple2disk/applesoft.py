@@ -1,3 +1,5 @@
+import anomaly
+import container
 import bitstring
 
 TOKENS = {
@@ -110,15 +112,18 @@ TOKENS = {
     0xEA: 'MID$'
 }
 
-# TODO: report anomaly if an unknown token is used
+class AppleSoft(container.Container):
+    def __init__(self, filename, data):
+        super(AppleSoft, self).__init__()
 
-class AppleSoft(object):
-    def __init__(self, data):
+        self.filename = filename
         data = bitstring.ConstBitStream(data)
 
+        # TODO: assert length is met
         self.length = data.read('uintle:16')
 
-        self.lines = {}
+        self.lines = []
+        self.program = {}
         last_line_number = -1
         last_memory = 0x801
         while data:
@@ -132,25 +137,43 @@ class AppleSoft(object):
                 token = data.read('uint:8')
                 bytes_read += 1
                 if token == 0:
-                    self.lines[line_number] = ''.join(line)
+                    self.lines.append(line_number)
+                    self.program[line_number] = ''.join(line)
                     break
 
-                if token in TOKENS:
-                    line.append(' ' + TOKENS[token] + ' ')
+                if token >= 0x80:
+                    try:
+                        line.append(' ' + TOKENS[token] + ' ')
+                    except KeyError:
+                        self.anomalies.append(anomaly.Anomaly(
+                            self, anomaly.CORRUPTION, 'Line number %d contains unexpected token: %02X' % (
+                                line_number, token)
+                            )
+                        )
                 else:
                     line.append(chr(token))
 
             if last_memory + bytes_read != next_memory:
-                print "%x + %x == %x != %x (gap %d)" % (last_memory, bytes_read, last_memory + bytes_read, next_memory, next_memory - last_memory - bytes_read)
+                self.anomalies.append(anomaly.Anomaly(
+                    self, anomaly.UNUSUAL, "%x + %x == %x != %x (gap %d)" % (
+                        last_memory, bytes_read, last_memory + bytes_read, next_memory,
+                        next_memory - last_memory - bytes_read)
+                    )
+                )
 
             if line_number <= last_line_number:
-                print "%d <= %d: %s" % (line_number, last_line_number, ''.join(line))
+                self.anomalies.append(anomaly.Anomaly(
+                    self, anomaly.UNUSUAL, "%d <= %d: %s" % (
+                        line_number, last_line_number, ''.join(line))
+                    )
+                )
 
-            print "%d %s" % (line_number, ''.join(line))
             last_line_number = line_number
             last_memory = next_memory
 
-    def __str__(self):
-        return '\n'.join('%s %s' % (num, line) for (num, line) in sorted(self.lines.items()))
+    def List(self):
+        return '\n'.join('%s %s' % (num, self.program[num]) for num in self.lines)
 
+    def __str__(self):
+        return 'AppleSoft(%s)' % self.filename
 

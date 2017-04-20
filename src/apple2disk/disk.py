@@ -1,3 +1,6 @@
+import anomaly
+import container
+
 import bitstring
 import hashlib
 import zlib
@@ -12,16 +15,20 @@ TRACK_SIZE = SECTORS_PER_TRACK * SECTOR_SIZE
 class IOError(Exception):
     pass
 
-class Disk(object):
+class Disk(container.Container):
     def __init__(self, name, data):
+        super(Disk, self).__init__()
+
         self.name = name
         self.data = data
+
         # TODO: support larger disk sizes
         assert len(data) == 140 * 1024
 
         self.hash = hashlib.sha1(data).hexdigest()
 
         self.sectors = {}
+        # Pre-load all sectors into map
         for (track, sector) in self.EnumerateSectors():
             self._ReadSector(track, sector)
 
@@ -47,6 +54,8 @@ class Disk(object):
             raise IOError("Track $%02x sector $%02x out of bounds" % (track, sector))
 
         data = bitstring.BitString(self.data[offset:offset + SECTOR_SIZE])
+
+        # This calls SetSectorOwner to register in self.sectors
         return Sector(self, track, sector, data)
 
     def ReadSector(self, track, sector):
@@ -56,11 +65,12 @@ class Disk(object):
             raise IOError("Track $%02x sector $%02x out of bounds" % (track, sector))
 
 
-class Sector(object):
+class Sector(container.Container):
     # TODO: other types will include: VTOC, Catalog, File metadata, File content, Deleted file, Free space
     TYPE = 'Unknown sector'
 
     def __init__(self, disk, track, sector, data):
+        super(Sector, self).__init__()
         # Reference back to parent disk
         self.disk = disk
 
@@ -75,6 +85,7 @@ class Sector(object):
         self.compress_ratio = len(compressed_data) * 100 / len(data.tobytes())
 
         disk.SetSectorOwner(track, sector, self)
+        disk.AddChild(self)
 
     # TODO: if all callers are using disk.ReadSector(track, sector) to get the sector then do that here
     @classmethod

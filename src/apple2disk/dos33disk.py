@@ -1,7 +1,10 @@
+import anomaly
 import applesoft
-import bitstring
+import container
 import disk as disklib
 import utils
+
+import bitstring
 
 class FileType(object):
     def __init__(self, short_type, long_type, parser=None):
@@ -56,7 +59,13 @@ class VTOCSector(disklib.Sector):
                 if free:
                     old_sector = self.disk.ReadSector(track, sector)
                     # check first this is an unclaimed sector
-                    assert type(old_sector) == disklib.Sector
+                    if type(old_sector) != disklib.Sector:
+                        self.anomalies.append(
+                            anomaly.Anomaly(
+                                self, anomaly.CORRUPTION, 'VTOC claims used sector is free: %s' % old_sector
+                            )
+                        )
+
                     FreeSector.fromSector(old_sector)
                 # TODO: also handle sectors that are claimed to be used but don't end up getting referenced by anything
 
@@ -232,17 +241,15 @@ class Dos33Disk(disklib.Disk):
                 continue
             contents.append(fds.data)
 
-        return File(entry, contents)
+        newfile = File(entry, contents)
+        self.AddChild(newfile)
+        return newfile
 
     def __str__(self):
         catalog = ['DISK VOLUME %d\n' % self.volume]
-        for filename in self.catalog:
-            entry = self.files[filename]
-            try:
-                file_type = FILE_TYPES[entry.file_type].short_type
-            except KeyError:
-                print "%s has unknown file type %02x" % (entry.FileName(), entry.file_type)
-                file_type = '?'
+        for filename in self.filenames:
+            entry = self.catalog[filename]
+            file_type = entry.file_type.short_type
             catalog.append(
                 '%s%s %03d %s' % (
                     '*' if entry.locked else ' ',
@@ -253,10 +260,13 @@ class Dos33Disk(disklib.Disk):
         return '\n'.join(catalog)
 
 
-class CatalogEntry(object):
+class CatalogEntry(container.Container):
     def __init__(self, track, sector, file_type, file_name, length):
+        super(CatalogEntry, self).__init__()
+
         self.track = track
         self.sector = sector
+        # TODO: add anomaly for unknown file type
         self.file_type = FILE_TYPES[file_type & 0x7f]
         self.locked = bool(file_type & 0x80)
         self.file_name = file_name
@@ -273,16 +283,26 @@ class CatalogEntry(object):
         return "Track $%02x Sector $%02x Type %s Name: %s Length: %d" % (self.track, self.sector, type_string, self.FileName(), self.length)
 
 
-class File(object):
+class File(container.Container):
     def __init__(self, catalog_entry, contents):
+        super(File, self).__init__()
+
         self.catalog_entry = catalog_entry
 
         self.contents = contents
         self.parsed_contents = None
+
         parser = catalog_entry.file_type.parser
         if parser:
             try:
-                self.parsed_contents = parser(contents)
-            except Exception:
-                print "Failed to parse file %s" % self.catalog_entry
-                print utils.HexDump(contents.tobytes())
+                self.parsed_contents = parser(catalog_entry.FileName(), contents)
+                self.AddChild(self.parsed_contents)
+            except Exception, e:
+                self.anomalies.append(
+                    anomaly.Anomaly(
+                        self, anomaly.CORRUPTION, 'Failed to parse file %s: %s' % (self.catalog_entry, e)
+                    )
+                )
+
+    def __str__(self):
+        return 'File(%s)' % self.catalog_entry.FileName()
