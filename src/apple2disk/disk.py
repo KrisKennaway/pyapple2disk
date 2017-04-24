@@ -1,4 +1,3 @@
-import anomaly
 import container
 
 import bitstring
@@ -32,8 +31,8 @@ class Disk(container.Container):
         for (track, sector) in self.EnumerateSectors():
             self._ReadSector(track, sector)
 
-        # Assign ownership of T0, S0 to RWTS
-        self.rwts = RWTS.fromSector(self.ReadSector(0, 0))
+        # Assign ownership of T0, S0 to boot1
+        self.boot1 = Boot1.fromSector(self.ReadSector(0, 0))
 
     @classmethod
     def Taste(cls, disk):
@@ -59,6 +58,7 @@ class Disk(container.Container):
         return Sector(self, track, sector, data)
 
     def ReadSector(self, track, sector):
+        # type: (int, int) -> Sector
         try:
             return self.sectors[(track, sector)]
         except KeyError:
@@ -94,17 +94,17 @@ class Sector(container.Container):
         # TODO: don't recompute hash and entropy
         return cls(sector.disk, sector.track, sector.sector, sector.data, *args, **kwargs)
 
-    # TOOD: move RWTS ones into RWTS() class?
+    # TOOD: move boot1 ones into Boot1() class?
     KNOWN_HASHES = {
         'b376885ac8452b6cbf9ced81b1080bfd570d9b91': 'Zero sector',
-        '90e6b1a0689974743cb92ca0b833ff1e683f4a73': 'RWTS (DOS 3.3 August 1980)',
-        '7ab36247fdf62e87f98d2964dd74d6572d17fff0': 'RWTS (DOS 3.3 January 1983)',
-        '16e4c17a85eb321bae784ab716975ddeef6da2c6': 'RWTS (DOS 3.3 System Master)',
-        '822c7450afa01f46bbc828d4d46e01bc08d73198': 'RWTS (ProntoDOS (1982))',
-        '30da15678e0d70e20ecf86bcb2de3fd3874dbd0d': 'RWTS (ProntoDOS (March 1983))',
-        '93d81a812d824d58dedec8f7787e9cfcc7a2d3b3': 'RWTS (Apple Pascal, Fortran)',
-        'adeb3be5c3d9487a76f1917d1c28104a1a6fc72f': 'RWTS (Faster DOS 3.3?)',
-        '4f4aff4e1eb8d806164544b64dc967abd76128a4': 'RWTS (ProDOS?)'
+        '90e6b1a0689974743cb92ca0b833ff1e683f4a73': 'Boot1 (DOS 3.3 August 1980)',
+        '7ab36247fdf62e87f98d2964dd74d6572d17fff0': 'Boot1 (DOS 3.3 January 1983)',
+        '16e4c17a85eb321bae784ab716975ddeef6da2c6': 'Boot1 (DOS 3.3 System Master)',
+        '822c7450afa01f46bbc828d4d46e01bc08d73198': 'Boot1 (ProntoDOS (1982))',
+        '30da15678e0d70e20ecf86bcb2de3fd3874dbd0d': 'Boot1 (ProntoDOS (March 1983))',
+        '93d81a812d824d58dedec8f7787e9cfcc7a2d3b3': 'Boot1 (Apple Pascal, Fortran)',
+        'adeb3be5c3d9487a76f1917d1c28104a1a6fc72f': 'Boot1 (Faster DOS 3.3?)',
+        '4f4aff4e1eb8d806164544b64dc967abd76128a4': 'Boot1 (ProDOS?)'
     }
 
     def HumanName(self):
@@ -118,8 +118,8 @@ class Sector(container.Container):
         return "Track $%02x Sector $%02x: %s (%s)" % (self.track, self.sector, self.TYPE, self.HumanName())
 
 
-class RWTS(Sector):
-    TYPE = "RWTS"
+class Boot1(Sector):
+    TYPE = "Boot1"
 
     def __init__(self, disk, track, sector, data):
-        super(RWTS, self).__init__(disk, track, sector, data)
+        super(Boot1, self).__init__(disk, track, sector, data)
