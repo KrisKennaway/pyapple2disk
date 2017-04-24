@@ -12,13 +12,18 @@ class FileType(object):
         self.long_type = long_type
         self.parser = parser
 
+# TODO: add handlers for parsing the rest
 FILE_TYPES = {
     0x00: FileType('T', 'TEXT'),
     0x01: FileType('I', 'INTEGER BASIC'),
-    # TODO: add handler for parsing file content
     0x02: FileType('A', 'APPLESOFT BASIC', applesoft.AppleSoft),
     0x04: FileType('B', 'BINARY'),
-    # TODO: others
+    # TODO: add anomalies for these
+    0x08: FileType('S', 'Type S File'),
+    0x10: FileType('R', 'Relocatable object module file'),
+    0x20: FileType('a', 'Type a File'),
+    0x40: FileType('b', 'Type b File'),
+    # TODO: unknown file type
 }
 
 class VTOCSector(disklib.Sector):
@@ -47,7 +52,7 @@ class VTOCSector(disklib.Sector):
         if tracks_per_disk != disklib.TRACKS_PER_DISK:
             self.anomalies.append(
                 anomaly.Anomaly(
-                    self, anomaly.INTERESTING, 'Disk has %d tracks > %d' % (
+                    self, anomaly.UNUSUAL, 'Disk has %d tracks > %d' % (
                         tracks_per_disk, disklib.TRACKS_PER_DISK)
                 )
             )
@@ -58,7 +63,7 @@ class VTOCSector(disklib.Sector):
         if (catalog_track, catalog_sector) != (0x11, 0x0f):
             self.anomalies.append(
                 anomaly.Anomaly(
-                    self, anomaly.INTERESTING, 'Catalog begins in unusual place: T$%02X S$%02X' % (
+                    self, anomaly.UNUSUAL, 'Catalog begins in unusual place: T$%02X S$%02X' % (
                         catalog_track, catalog_sector)
                 )
             )
@@ -82,7 +87,7 @@ class VTOCSector(disklib.Sector):
                         self.anomalies.append(
                             anomaly.Anomaly(
                                 self, anomaly.CORRUPTION,
-                                'Freemap claims free sector in track 0: T$%02X S$%02X (cannot be allocated in DOS ' +
+                                'Freemap claims free sector in track 0: T$%02X S$%02X (cannot be allocated in DOS '
                                 '3.3)' % (track, sector)
                             )
                         )
@@ -211,8 +216,9 @@ class Dos33Disk(disklib.Disk):
         # Maps stripped filename to File() object
         self.files = {}
         for catalog_entry in self.catalog.itervalues():
+            newfile = self.ReadCatalogEntry(catalog_entry)
             # TODO: last character has special meaning for deleted files and may legitimately be whitespace.  Could collide with a non-deleted file of the same stripped name
-            self.files[catalog_entry.FileName().rstrip()] = self.ReadCatalogEntry(catalog_entry)
+            self.files[catalog_entry.FileName().rstrip()] = newfile
 
     def _ReadVTOC(self):
         return VTOCSector.fromSector(self.ReadSector(0x11, 0x0))
@@ -254,19 +260,26 @@ class Dos33Disk(disklib.Disk):
                 # TODO: add sector type for this.  What to do about sectors claimed by this file that are in use by another file?  May discover this before or after this entry
                 print "Found deleted file %s" % entry.FileName()
                 break
-            fs = FileMetadataSector.fromSector(self.ReadSector(next_track, next_sector), entry.FileName())
-            (next_track, next_sector) = (fs.next_track, fs.next_sector)
-
-            num_sectors = len(fs.data_track_sectors)
-            sector_list[fs.sector_offset:fs.sector_offset+num_sectors] = fs.data_track_sectors
+            try:
+                fs = FileMetadataSector.fromSector(self.ReadSector(next_track, next_sector), entry.FileName())
+                (next_track, next_sector) = (fs.next_track, fs.next_sector)
+                num_sectors = len(fs.data_track_sectors)
+                sector_list[fs.sector_offset:fs.sector_offset + num_sectors] = fs.data_track_sectors
+            except disklib.IOError, e:
+                # TODO: add a flag indicating truncated file?
+                self.anomalies.append(
+                    anomaly.Anomaly(
+                        self, anomaly.CORRUPTION, 'File metadata sector out of bounds for file %s: %s' % (
+                            entry.FileName(), e)
+                    )
+                )
+                (next_track, next_sector) = (None, None)
 
         # TODO: Assert we didn't have any holes.  Or is this fine e.g. for a sparse text file?
 
-        #print track_sector_count
         # We allocated space up-front for an unknown number of t/s list sectors, trim them from the end
         sector_list = sector_list[:entry.length - track_sector_count]
 
-        #print sector_list
         contents = bitstring.BitString()
         for ts in sector_list:
             if not ts:
@@ -276,7 +289,12 @@ class Dos33Disk(disklib.Disk):
             try:
                 fds = FileDataSector.fromSector(self.ReadSector(t, s), entry.FileName())
             except disklib.IOError, e:
-                print "%s: Failed to read File data sector: %s" % (entry, e)
+                self.anomalies.append(
+                    anomaly.Anomaly(
+                        self, anomaly.CORRUPTION, 'File data sector out of bounds for file %s: %s' % (
+                            entry.FileName(), e)
+                    )
+                )
                 continue
             contents.append(fds.data)
 
@@ -284,7 +302,7 @@ class Dos33Disk(disklib.Disk):
         self.AddChild(newfile)
         return newfile
 
-    def __str__(self):
+    def Catalog(self):
         catalog = ['DISK VOLUME %d\n' % self.volume]
         for filename in self.filenames:
             entry = self.catalog[filename]
@@ -297,6 +315,9 @@ class Dos33Disk(disklib.Disk):
                 )
             )
         return '\n'.join(catalog)
+
+    def __str__(self):
+        return '%s (DOS 3.3 disk)' % (self.name)
 
 
 class CatalogEntry(container.Container):

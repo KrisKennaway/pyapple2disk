@@ -43,13 +43,13 @@ def main():
                 print data
 
 
-    # Group disks by hash of RWTS sector
-    rwts_hashes = {}
+    # Group disks by hash of boot1 sector
+    boot1_hashes = {}
     for f, d in disks.iteritems():
-        rwts_hash = d.rwts.hash
-        rwts_hashes.setdefault(rwts_hash, []).append(f)
+        boot1_hash = d.Boot1.hash
+        boot1_hashes.setdefault(boot1_hash, []).append(f)
 
-    for h, disks in rwts_hashes.iteritems():
+    for h, disks in boot1_hashes.iteritems():
         print h
         for d in sorted(disks):
             print "  %s" % d
