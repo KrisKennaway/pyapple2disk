@@ -37,7 +37,9 @@ class Disk(container.Container):
     @classmethod
     def Taste(cls, disk):
         # TODO: return a defined exception here
-        return cls(disk.name, disk.data)
+        newdisk = cls(disk.name, disk.data)
+        disk.AddChild(newdisk)
+        return newdisk
 
     def SetSectorOwner(self, track, sector, owner):
         self.sectors[(track, sector)] = owner
